@@ -1,0 +1,98 @@
+﻿name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, dev ]
+  workflow_dispatch:
+
+env:
+  IMAGE_REGISTRY: registry.digitalocean.com/lab5-registry
+  PROJECT_NAME: devops-project
+
+jobs:
+  sast:
+    name: Static Code Analysis (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Run CodeQL Analysis
+        uses: github/codeql-action/init@v2
+        with:
+          languages: csharp
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+
+  build-and-push:
+    name: Build and Push Docker Images
+    needs: sast
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Log in to DigitalOcean Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DO_REGISTRY_USER }}
+          password: ${{ secrets.DO_REGISTRY_TOKEN }}
+
+      - name: Build and push CommunicationControl
+        run: |
+          docker build -t $IMAGE_REGISTRY/communication-control:latest -f Dockerfile.communication-control .
+          docker push $IMAGE_REGISTRY/communication-control:latest
+
+      - name: Build and push HiveMind
+        run: |
+          docker build -t $IMAGE_REGISTRY/hivemind:latest -f Dockerfile.hivemind .
+          docker push $IMAGE_REGISTRY/hivemind:latest
+
+      - name: Build and push MapClient
+        run: |
+          docker build -t $IMAGE_REGISTRY/map-client:latest -f Dockerfile.map-client ./src/MapClient
+          docker push $IMAGE_REGISTRY/map-client:latest
+
+  deploy:
+    name: Deploy to Kubernetes
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Set up GKE credentials
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GKE_CREDENTIALS }}
+
+      - name: Configure kubectl for GKE
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: lab6-cluster
+          location: europe-west1
+          project_id: evocative-radar-460410-u9
+
+      - name: Apply Kubernetes Manifests
+        run: |
+          kubectl apply -f manifest/ -n lab6
+
+      - name: Rollout Restart (Optional)
+        run: |
+          kubectl rollout restart deployment communication-control -n lab6
+          kubectl rollout restart deployment hivemind -n lab6
+          kubectl rollout restart deployment map-client -n lab6
