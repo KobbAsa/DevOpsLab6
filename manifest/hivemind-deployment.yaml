@@ -21,4 +21,4 @@ spec:
             - name: COMMUNICATION_CENTER_URL
               value: http://communication-control:8080
       imagePullSecrets:
-         - name: do-registry
+        - name: do-registry
